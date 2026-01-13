@@ -1,0 +1,56 @@
+```
+# Android build artifacts
+*.apk
+*.aar
+*.dex
+*.so
+
+# Android build directories
+build/
+app/build/
+.gradle/
+local.properties
+
+# IDE files
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Log files
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Python (if any Python components)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+
+# Node.js (if any web components)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Compiled JavaScript (if any web components)
+dist/
+out/
+build/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+```
