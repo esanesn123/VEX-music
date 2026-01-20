@@ -167,7 +167,8 @@
         Plus,
         User,
         Radio,
-        Trash2
+        Trash2,
+        Users
       } from "lucide-react";
       import { initializeApp } from "firebase/app";
       import {
@@ -428,7 +429,6 @@
             : "mixed";
 
         let vibe = "Eclectic";
-        // REMOVED DEVOTIONAL LOGIC
         if (topTags.includes("rock") || topTags.includes("metal")) vibe = "Rocker";
         else if (topTags.includes("lofi") || topTags.includes("chillout"))
           vibe = "Chill";
@@ -446,7 +446,6 @@
         if (profile.topArtists[0] && profile.preferredSource !== "jamendo")
           promises.push(searchSaavn(`${profile.topArtists[0]} songs`));
         
-        // Smart Suggestions based on Vibe
         if (profile.vibe === "Chill") promises.push(searchSaavn("Lofi Hindi"));
         else if (profile.vibe === "Party") promises.push(searchSaavn("Bollywood Dance"));
         else if (profile.vibe === "Melancholy") promises.push(searchSaavn("Sad Hindi Songs"));
@@ -467,7 +466,6 @@
         const isNight = hour >= 20 || hour < 5;
         let queries = [];
 
-        // REMOVED BHAKTI/DEVOTIONAL
         if (profile.preferredSource !== "jamendo") {
           if (isMorning) queries.push("Acoustic Hindi", "Soft Bollywood");
           else if (isNight) queries.push("Hindi Lofi", "Arijit Singh Sad", "Romantic Hindi");
@@ -502,7 +500,6 @@
       };
 
       const getExploreConfig = () => [
-        // REMOVED DEVOTIONAL
         { title: "New Releases", query: "New Hindi Songs" },
         { title: "Top Charts India", query: "Top 50 India" },
         { title: "Punjabi Power", query: "Latest Punjabi Hits" },
@@ -736,103 +733,63 @@
             return nf;
           });
 
-        // --- Media Session API integration ---
+        // --- ROBUST MEDIA SESSION API (Android Notification Fix) ---
         useEffect(() => {
-          if (!("mediaSession" in navigator)) return;
-          const track = state.currentTrack;
-          
-          if (!track) {
-            try {
-                navigator.mediaSession.playbackState = "none";
-                navigator.mediaSession.metadata = null;
-            } catch(e) {}
-            return;
-          }
-
-          try {
-            navigator.mediaSession.metadata = new MediaMetadata({
-              title: track.name,
-              artist: track.artist_name,
-              album: track.album_name,
-              artwork: [
-                { src: track.album_image, sizes: "96x96", type: "image/jpeg" },
-                { src: track.album_image, sizes: "128x128", type: "image/jpeg" },
-                { src: track.album_image, sizes: "192x192", type: "image/jpeg" },
-                { src: track.album_image, sizes: "256x256", type: "image/jpeg" },
-                { src: track.album_image, sizes: "384x384", type: "image/jpeg" },
-                { src: track.album_image, sizes: "512x512", type: "image/jpeg" },
-              ],
-            });
-          } catch (e) {
-            console.warn("MediaSession metadata error:", e);
-          }
-        }, [state.currentTrack]);
-
-        useEffect(() => {
-          if (!("mediaSession" in navigator)) return;
-          try {
-            navigator.mediaSession.playbackState = state.isPlaying
-              ? "playing"
-              : "paused";
-          } catch (e) {
-            console.warn("MediaSession playbackState error:", e);
-          }
-        }, [state.isPlaying]);
-
-        useEffect(() => {
-          if (!("mediaSession" in navigator)) return;
-          const ms = navigator.mediaSession;
-
-          ms.setActionHandler("play", () => {
-            setState((prev) => ({ ...prev, isPlaying: true }));
-          });
-
-          ms.setActionHandler("pause", () => {
-            setState((prev) => ({ ...prev, isPlaying: false }));
-          });
-
-          ms.setActionHandler("previoustrack", () => {
-            prevTrack();
-          });
-
-          ms.setActionHandler("nexttrack", () => {
-            nextTrack();
-          });
-
-          ms.setActionHandler("seekto", (details) => {
-            if (details.seekTime != null && audioRef.current) {
-              audioRef.current.currentTime = details.seekTime;
-              setState((prev) => ({
-                ...prev,
-                currentTime: details.seekTime,
-              }));
-            }
-          });
-          
-          ms.setActionHandler("seekbackward", (details) => {
-             const skip = details.seekOffset || 10;
-             if(audioRef.current) {
-                audioRef.current.currentTime = Math.max(audioRef.current.currentTime - skip, 0);
-             }
-          });
-          
-          ms.setActionHandler("seekforward", (details) => {
-             const skip = details.seekOffset || 10;
-             if(audioRef.current) {
-                audioRef.current.currentTime = Math.min(audioRef.current.currentTime + skip, audioRef.current.duration);
-             }
-          });
-
-          return () => {
-            ["play", "pause", "previoustrack", "nexttrack", "seekto", "seekbackward", "seekforward"].forEach(
-              (action) => {
+            if (!("mediaSession" in navigator)) return;
+            
+            // 1. Setup metadata only when track changes
+            if(state.currentTrack) {
+                const track = state.currentTrack;
                 try {
-                  ms.setActionHandler(action, null);
-                } catch (e) {}
-              }
-            );
-          };
-        }, [nextTrack, prevTrack]);
+                    navigator.mediaSession.metadata = new MediaMetadata({
+                      title: track.name,
+                      artist: track.artist_name,
+                      album: track.album_name,
+                      artwork: [
+                        { src: track.album_image, sizes: "96x96", type: "image/jpeg" },
+                        { src: track.album_image, sizes: "128x128", type: "image/jpeg" },
+                        { src: track.album_image, sizes: "192x192", type: "image/jpeg" },
+                        { src: track.album_image, sizes: "256x256", type: "image/jpeg" },
+                        { src: track.album_image, sizes: "384x384", type: "image/jpeg" },
+                        { src: track.album_image, sizes: "512x512", type: "image/jpeg" },
+                      ]
+                    });
+                } catch(e) { console.warn(e); }
+                
+                // 2. Setup handlers (MUST be redone if track references change)
+                const ms = navigator.mediaSession;
+                const handlers = [
+                    ['play', () => {
+                         setState(p => ({...p, isPlaying: true}));
+                         if(audioRef.current) audioRef.current.play();
+                    }],
+                    ['pause', () => {
+                         setState(p => ({...p, isPlaying: false}));
+                         if(audioRef.current) audioRef.current.pause();
+                    }],
+                    ['previoustrack', prevTrack],
+                    ['nexttrack', nextTrack],
+                    ['seekto', (details) => {
+                        if(details.seekTime && audioRef.current) {
+                            audioRef.current.currentTime = details.seekTime;
+                            setState(p => ({...p, currentTime: details.seekTime}));
+                        }
+                    }]
+                ];
+                
+                handlers.forEach(([action, handler]) => {
+                    try { ms.setActionHandler(action, handler); } catch(e){}
+                });
+            }
+        }, [state.currentTrack, nextTrack, prevTrack]);
+
+        // 3. Sync Playback State specifically
+        useEffect(() => {
+            if (!("mediaSession" in navigator)) return;
+            try {
+                navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
+            } catch(e) {}
+        }, [state.isPlaying]);
 
         useEffect(() => {
           nextTrackRef.current = nextTrack;
@@ -885,6 +842,7 @@
                 { id: "home", icon: <Home size={22} />, l: "Home" },
                 { id: "search", icon: <Search size={22} />, l: "Search" },
                 { id: "library", icon: <Library size={22} />, l: "Library" },
+                { id: "community", icon: <Users size={22} />, l: "Community" },
               ].map((i) => (
                 <button
                   key={i.id}
@@ -1969,9 +1927,11 @@
         const [selMood, setSelMood] = useState(null);
         const [artist, setArtist] = useState(null);
         const [playlists, setPlaylists] = useState([]);
+        const [publicPlaylists, setPublicPlaylists] = useState([]);
         const [selPl, setSelPl] = useState(null);
         const [trackMenu, setTrackMenu] = useState(null);
         const [showPlPicker, setShowPlPicker] = useState(false);
+        const [libTab, setLibTab] = useState("private"); // 'private' | 'public'
         const loaded = useRef(false);
 
         const { playPlaylist, favorites, history } = usePlayer();
@@ -2010,7 +1970,20 @@
                  setLoading(false);
              });
           }
+          if (view === "community") {
+              setLibTab("public");
+              setView("library");
+          }
         }, [view]);
+
+        useEffect(() => {
+          // Public Playlist Fetcher
+          const pubRef = ref(db, 'publicPlaylists');
+          return onValue(pubRef, (s) => {
+              const d = s.val();
+              setPublicPlaylists(d ? Object.keys(d).map(k => ({id: k, ...d[k]})) : []);
+          });
+        }, []);
 
         useEffect(() => {
           if (currentUser) {
@@ -2034,21 +2007,40 @@
         const createPl = async () => {
           if (!currentUser) return setView("auth");
           const n = prompt("Enter playlist name:");
-          if (n)
-            await set(
-              push(ref(db, `users/${currentUser.uid}/playlists`)),
-              {
+          if (!n) return;
+          
+          const isPublic = confirm("Make this playlist Public? \n\nOK = Public (Everyone can see)\nCancel = Private (Only you)");
+          
+          const newPl = {
                 name: n,
                 createdAt: Date.now(),
                 tracks: [],
-              }
-            );
+                ownerId: currentUser.uid,
+                ownerName: currentUser.email.split('@')[0],
+                isPublic: isPublic
+          };
+
+          if(isPublic) {
+              await push(ref(db, 'publicPlaylists'), newPl);
+          } else {
+              await push(ref(db, `users/${currentUser.uid}/playlists`), newPl);
+          }
         };
         
-        const deletePlaylist = async (id) => {
-            if(!confirm("Delete this playlist?")) return;
-            await remove(ref(db, `users/${currentUser.uid}/playlists/${id}`));
-            if(selPl && selPl.id === id) {
+        const deletePlaylist = async (pl) => {
+            if(!confirm("Delete this playlist? This cannot be undone.")) return;
+            
+            if(pl.isPublic) {
+                if(pl.ownerId !== currentUser?.uid) {
+                    alert("You can only delete your own public playlists.");
+                    return;
+                }
+                await remove(ref(db, `publicPlaylists/${pl.id}`));
+            } else {
+                 await remove(ref(db, `users/${currentUser.uid}/playlists/${pl.id}`));
+            }
+            
+            if(selPl && selPl.id === pl.id) {
                 setSelPl(null);
                 setView("library");
             }
@@ -2057,6 +2049,8 @@
         const addToPlaylist = async (plId) => {
             if(!trackMenu || !currentUser) return;
             const t = trackMenu;
+            // Only adding to PRIVATE playlists for now to keep simple, or public owned by user
+            // Simplified: Add to private playlists only via this picker
             const plRef = ref(db, `users/${currentUser.uid}/playlists/${plId}`);
             try {
                 const snap = await get(plRef);
@@ -2076,8 +2070,16 @@
         
         const removeFromPlaylist = async () => {
             if(!trackMenu || !selPl || !currentUser) return;
+            // Check ownership
+            if(selPl.ownerId && selPl.ownerId !== currentUser.uid) {
+                alert("You can't remove songs from a playlist you don't own.");
+                return;
+            }
+
             const t = trackMenu;
-            const plRef = ref(db, `users/${currentUser.uid}/playlists/${selPl.id}`);
+            const path = selPl.isPublic ? `publicPlaylists/${selPl.id}` : `users/${currentUser.uid}/playlists/${selPl.id}`;
+            const plRef = ref(db, path);
+            
              try {
                 const snap = await get(plRef);
                 if(snap.exists()) {
@@ -2222,38 +2224,53 @@
               );
             return (
               <div className="px-6 md:px-8 pt-10">
-                <div className="flex items-center justify-between mb-10">
+                <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
                   <h1 className="text-4xl font-black tracking-tight">
-                    Your Library
+                    {libTab === 'private' ? 'Your Library' : 'Community Playlists'}
                   </h1>
-                  <button
-                    onClick={createPl}
-                    className="flex items-center gap-2 bg-jamendo-500 hover:bg-jamendo-600 px-6 py-3 rounded-full font-bold transition shadow-lg shadow-jamendo-500/20"
-                  >
-                    <Plus size={20} /> New Playlist
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                  <div
-                    onClick={() => setView("liked")}
-                    className="bg-gradient-to-br from-indigo-700 to-blue-500 p-6 rounded-2xl aspect-square flex flex-col justify-end cursor-pointer hover:scale-105 transition duration-300 shadow-xl group relative overflow-hidden"
-                  >
-                    <div className="absolute top-0 right-0 p-8 opacity-20">
-                      <Heart size={100} fill="white" />
-                    </div>
-                    <div className="relative z-10">
-                      <h3 className="font-black text-2xl mb-1">
-                        Liked Songs
-                      </h3>
-                      <p className="text-sm text-indigo-200 font-medium">
-                        {favorites.length} songs
-                      </p>
-                    </div>
-                    <div className="absolute right-4 bottom-4 bg-jamendo-500 rounded-full p-4 shadow-lg opacity-0 group-hover:opacity-100 transition translate-y-4 group-hover:translate-y-0">
-                      <Play fill="white" size={20} />
-                    </div>
+                  <div className="flex items-center gap-2 bg-[#222] p-1 rounded-lg self-start">
+                      <button onClick={() => setLibTab('private')} className={`px-4 py-2 rounded-md text-xs font-bold transition ${libTab === 'private' ? 'bg-white text-black' : 'text-gray-400 hover:text-white'}`}>
+                          My Private
+                      </button>
+                       <button onClick={() => setLibTab('public')} className={`px-4 py-2 rounded-md text-xs font-bold transition ${libTab === 'public' ? 'bg-jamendo-500 text-white' : 'text-gray-400 hover:text-white'}`}>
+                          Public Community
+                      </button>
                   </div>
-                  {playlists.map((p) => (
+                </div>
+                
+                {libTab === 'private' && (
+                     <button
+                        onClick={createPl}
+                        className="flex items-center gap-2 bg-jamendo-500 hover:bg-jamendo-600 px-6 py-3 rounded-full font-bold transition shadow-lg shadow-jamendo-500/20 mb-8"
+                      >
+                        <Plus size={20} /> New Playlist
+                      </button>
+                )}
+
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
+                  {libTab === 'private' && (
+                      <div
+                        onClick={() => setView("liked")}
+                        className="bg-gradient-to-br from-indigo-700 to-blue-500 p-6 rounded-2xl aspect-square flex flex-col justify-end cursor-pointer hover:scale-105 transition duration-300 shadow-xl group relative overflow-hidden"
+                      >
+                        <div className="absolute top-0 right-0 p-8 opacity-20">
+                          <Heart size={100} fill="white" />
+                        </div>
+                        <div className="relative z-10">
+                          <h3 className="font-black text-2xl mb-1">
+                            Liked Songs
+                          </h3>
+                          <p className="text-sm text-indigo-200 font-medium">
+                            {favorites.length} songs
+                          </p>
+                        </div>
+                        <div className="absolute right-4 bottom-4 bg-jamendo-500 rounded-full p-4 shadow-lg opacity-0 group-hover:opacity-100 transition translate-y-4 group-hover:translate-y-0">
+                          <Play fill="white" size={20} />
+                        </div>
+                      </div>
+                  )}
+                  
+                  {(libTab === 'private' ? playlists : publicPlaylists).map((p) => (
                     <div
                       key={p.id}
                       onClick={() => {
@@ -2262,28 +2279,41 @@
                       }}
                       className="bg-[#181818] p-5 rounded-2xl aspect-square flex flex-col justify-end cursor-pointer hover:bg-[#282828] transition group relative"
                     >
-                      <div className="mb-auto bg-[#333] w-full aspect-square rounded-xl shadow-lg flex items-center justify-center">
+                      <div className="mb-auto bg-[#333] w-full aspect-square rounded-xl shadow-lg flex items-center justify-center relative overflow-hidden">
+                        {p.isPublic && (
+                             <div className="absolute top-2 right-2 bg-jamendo-500 text-[8px] font-bold px-2 py-1 rounded text-white">PUBLIC</div>
+                        )}
                         <Music size={48} className="text-gray-500" />
                       </div>
                       <h3 className="font-bold mt-5 truncate">{p.name}</h3>
                       <p className="text-xs text-gray-400 font-medium mt-1">
-                        By {currentUser.email?.split("@")[0]}
+                        By {p.ownerName || "Unknown"}
                       </p>
                       <div className="absolute right-4 bottom-28 bg-jamendo-500 rounded-full p-3.5 shadow-lg opacity-0 group-hover:opacity-100 transition translate-y-4 group-hover:translate-y-0">
                         <Play fill="white" size={20} />
                       </div>
                     </div>
                   ))}
+                  
+                   {libTab === 'public' && publicPlaylists.length === 0 && (
+                      <div className="col-span-full text-center py-20 text-gray-500">
+                          <p>No public playlists yet. Be the first to create one!</p>
+                      </div>
+                  )}
                 </div>
               </div>
             );
           }
 
           if (view === "pl_det" && selPl) {
+            const isOwner = selPl.ownerId === currentUser?.uid;
             return (
               <div className="pt-10">
                 <div className="flex flex-col md:flex-row items-end gap-8 mb-10 px-6 md:px-8">
-                  <div className="w-52 h-52 bg-[#222] shadow-2xl flex items-center justify-center rounded-lg">
+                  <div className="w-52 h-52 bg-[#222] shadow-2xl flex items-center justify-center rounded-lg relative overflow-hidden">
+                     {selPl.isPublic && (
+                         <div className="absolute top-0 right-0 bg-jamendo-500 text-white text-xs font-bold px-3 py-1 rounded-bl-lg">PUBLIC</div>
+                     )}
                     <Music size={80} className="text-gray-600" />
                   </div>
                   <div className="flex flex-col gap-3">
@@ -2294,13 +2324,15 @@
                       {selPl.name}
                     </h1>
                     <p className="text-sm font-medium text-gray-400 flex items-center gap-2">
-                      <User size={14} /> {currentUser?.email?.split("@")[0]}{" "}
+                      <User size={14} /> {selPl.ownerName || "Unknown"}{" "}
                       <span className="text-gray-600">•</span>{" "}
                       {selPl.tracks?.length || 0} songs
                     </p>
-                    <button onClick={() => deletePlaylist(selPl.id)} className="flex items-center gap-2 text-red-500 hover:bg-red-500/10 px-4 py-2 rounded-full w-fit transition text-sm font-bold">
-                        <Trash2 size={16} /> Delete Playlist
-                    </button>
+                    {isOwner && (
+                        <button onClick={() => deletePlaylist(selPl)} className="flex items-center gap-2 text-red-500 hover:bg-red-500/10 px-4 py-2 rounded-full w-fit transition text-sm font-bold">
+                            <Trash2 size={16} /> Delete Playlist
+                        </button>
+                    )}
                   </div>
                 </div>
                 <div className="px-2 md:px-4">
@@ -2314,7 +2346,7 @@
                   ) : (
                     <div className="text-center py-20 text-gray-500 font-bold">
                       <p>
-                        This playlist is empty. Add songs from the track menu!
+                        This playlist is empty.
                       </p>
                     </div>
                   )}
@@ -2482,7 +2514,7 @@
                       <div className="relative h-32 w-32 md:h-40 md:w-40 flex-shrink-0 shadow-2xl rounded-lg overflow-hidden">
                         <img
                           src={topRes.album_image}
-                          className="h-full w-full object-cover group-hover:scale-110 transition duration-700"
+                          className="h-full w-full object-cover group-hover:scale-105 transition duration-700"
                         />
                         <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition duration-300 backdrop-blur-[2px]">
                           <div className="bg-jamendo-500 rounded-full p-4 text-white shadow-xl scale-90 group-hover:scale-100 transition">
