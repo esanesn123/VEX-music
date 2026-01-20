@@ -8,7 +8,6 @@
     />
     <title>VEX MUSIC</title>
 
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -16,9 +15,9 @@
         theme: {
           extend: {
             colors: {
-              saavn: {
-                500: "#ff6600",
-                600: "#cc5200",
+              jamendo: {
+                500: "#8c366c",
+                600: "#752d5b",
               },
               spotify: {
                 black: "#121212",
@@ -42,7 +41,6 @@
       };
     </script>
 
-    <!-- Styles -->
     <style>
       ::-webkit-scrollbar {
         width: 6px;
@@ -98,10 +96,8 @@
       }
     </style>
 
-    <!-- Babel for in-browser JSX compilation -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-    <!-- Import Map -->
     <script type="importmap">
       {
         "imports": {
@@ -171,6 +167,7 @@
         Plus,
         User,
         Radio,
+        Trash2
       } from "lucide-react";
       import { initializeApp } from "firebase/app";
       import {
@@ -180,14 +177,11 @@
         onAuthStateChanged,
         signOut,
       } from "firebase/auth";
-      import { getDatabase, ref, push, set, onValue } from "firebase/database";
+      import { getDatabase, ref, push, set, onValue, get, update, remove } from "firebase/database";
 
       // --- CONFIG ---
-      const SAAVN_BASE_URLS = [
-        "https://saavn.dev.api.avishay.co.il",
-        "https://saavn.me",
-        "https://jiosaavn-api-privatecvc2.vercel.app",
-      ];
+      const CLIENT_ID = "443e1050";
+      const API_BASE_URL = "https://api.jamendo.com/v3.0";
 
       const firebaseConfig = {
         apiKey: "AIzaSyA6jb5U-x8CSFtHCZMVqHaWzLeV98MoWGE",
@@ -222,8 +216,77 @@
           .join("&")}`;
       };
 
+      const fetchJamendo = async (endpoint, params) => {
+        const cacheKey = generateCacheKey(`jamendo_${endpoint}`, params);
+        const cached = getCached(cacheKey);
+        if (cached) return cached;
+
+        try {
+          const url = new URL(`${API_BASE_URL}${endpoint}`);
+          Object.entries({
+            client_id: CLIENT_ID,
+            format: "jsonpretty",
+            include: "musicinfo+stats",
+            limit: "20",
+            ...params,
+          }).forEach(([k, v]) => url.searchParams.append(k, v));
+
+          const response = await fetch(url.toString());
+          const data = await response.json();
+          const tracks = data.results.map((raw) => ({
+            id: raw.id,
+            name: raw.name,
+            duration: raw.duration,
+            artist_id: raw.artist_id,
+            artist_name: raw.artist_name,
+            album_name: raw.album_name,
+            album_id: raw.album_id,
+            album_image: raw.album_image,
+            audio: raw.audio,
+            audiodownload: raw.audiodownload,
+            shareurl: raw.shareurl,
+            image: raw.image,
+            source: "jamendo",
+            tags: raw.musicinfo?.tags?.tags || [],
+          }));
+
+          if (tracks.length > 0) setCache(cacheKey, tracks);
+          return tracks;
+        } catch (e) {
+          console.error(e);
+          return [];
+        }
+      };
+
+      const getTrendingTracks = (limit = 20) =>
+        fetchJamendo("/tracks/", {
+          limit: limit.toString(),
+          boost: "popularity_week",
+          lang: "en",
+        });
+      const searchJamendo = (query) =>
+        fetchJamendo("/tracks/", { search: query });
+      const getTracksByTag = (tag, limit = 20) =>
+        fetchJamendo("/tracks/", {
+          limit: limit.toString(),
+          tags: tag,
+          boost: "popularity_month",
+        });
+      const getTracksByArtist = (artistId, limit = 20) =>
+        fetchJamendo("/tracks/", {
+          limit: limit.toString(),
+          artist_id: artistId,
+          order: "popularity_total",
+        });
+
+      const SAAVN_BASE_URLS = [
+        "https://saavn.dev.api.avishay.co.il",
+        "https://saavn.me",
+        "https://jiosaavn-api-privatecvc2.vercel.app",
+      ];
+
       const mapSaavnToJamendo = (track) => {
-        let image = "https://c.saavncdn.com/artworks/000000000/00000000/default.jpg";
+        let image = "https://www.jamendo.com/common/images/track_placeholder.png";
         if (track.image) {
           if (Array.isArray(track.image) && track.image.length > 0) {
             image =
@@ -321,88 +384,6 @@
         return [];
       };
 
-      // Mock functions for trending and other features that were previously using Jamendo
-      const getTrendingTracks = async (limit = 20) => {
-        const cacheKey = generateCacheKey("saavn_trending", { limit });
-        const cached = getCached(cacheKey);
-        if (cached) return cached;
-
-        const trendingQueries = ["top songs", "trending", "popular", "featured"];
-        const randomQuery = trendingQueries[Math.floor(Math.random() * trendingQueries.length)];
-        
-        const results = await searchSaavn(randomQuery);
-        const limitedResults = results.slice(0, limit);
-        setCache(cacheKey, limitedResults);
-        return limitedResults;
-      };
-
-      const getTracksByTag = async (tag, limit = 20) => {
-        const cacheKey = generateCacheKey("saavn_tag", { tag, limit });
-        const cached = getCached(cacheKey);
-        if (cached) return cached;
-
-        const results = await searchSaavn(`${tag} songs`);
-        const limitedResults = results.slice(0, limit);
-        setCache(cacheKey, limitedResults);
-        return limitedResults;
-      };
-
-      const getTracksByArtist = async (artistId, limit = 20) => {
-        const cacheKey = generateCacheKey("saavn_artist", { artistId, limit });
-        const cached = getCached(cacheKey);
-        if (cached) return cached;
-
-        // Extract artist name from ID if it's a saavn ID
-        const artistName = artistId.startsWith('saavn_') ? 
-          artistId.replace('saavn_', '').replace(/_/g, ' ') : 
-          artistId;
-          
-        const results = await searchSaavn(artistName);
-        const limitedResults = results.slice(0, limit);
-        setCache(cacheKey, limitedResults);
-        return limitedResults;
-      };
-
-      const searchSaavn = async (query) => {
-        const cacheKey = generateCacheKey("saavn_search", { query });
-        const cached = getCached(cacheKey);
-        if (cached) return cached;
-
-        for (const baseUrl of SAAVN_BASE_URLS) {
-          try {
-            const res = await fetch(
-              `${baseUrl}/search/songs?query=${encodeURIComponent(
-                query
-              )}&page=1&limit=40`
-            );
-            if (!res.ok) continue;
-
-            const json = await res.json();
-            let results = [];
-
-            if (
-              json.status?.toLowerCase() === "success" ||
-              json.status === "SUCCESS" ||
-              json.data
-            ) {
-              if (json.data?.results) results = json.data.results;
-              else if (Array.isArray(json.data)) results = json.data;
-            }
-
-            if (results.length > 0) {
-              const tracks = results
-                .map(mapSaavnToJamendo)
-                .filter((t) => t !== null);
-              if (tracks.length > 0) {
-                setCache(cacheKey, tracks);
-                return tracks;
-              }
-            }
-          } catch (e) {}
-        }
-        return [];
-      };
-
       const shuffle = (array) => array.sort(() => Math.random() - 0.5);
 
       const analyzeTasteProfile = (history) => {
@@ -410,15 +391,17 @@
           return {
             topTags: [],
             topArtists: [],
-            preferredSource: "saavn",
+            preferredSource: "mixed",
             vibe: "Newcomer",
           };
         const tagCounts = {};
         const artistCounts = {};
-        let saavnCount = 0;
+        let jamendoCount = 0,
+          saavnCount = 0;
 
         history.forEach((track) => {
           if (track.source === "saavn") saavnCount++;
+          else jamendoCount++;
           const artist = track.artist_name.split(",")[0].trim();
           artistCounts[artist] = (artistCounts[artist] || 0) + 1;
           track.tags?.forEach((tag) => {
@@ -437,26 +420,39 @@
           .sort(([, a], [, b]) => b - a)
           .slice(0, 3)
           .map(([a]) => a);
-        const preferredSource = "saavn";
+        const preferredSource =
+          saavnCount > jamendoCount * 1.5
+            ? "saavn"
+            : jamendoCount > saavnCount * 1.5
+            ? "jamendo"
+            : "mixed";
 
         let vibe = "Eclectic";
+        // REMOVED DEVOTIONAL LOGIC
         if (topTags.includes("rock") || topTags.includes("metal")) vibe = "Rocker";
         else if (topTags.includes("lofi") || topTags.includes("chillout"))
           vibe = "Chill";
+        else if (topTags.includes("sad") || topTags.includes("acoustic")) 
+          vibe = "Melancholy";
+        else if (topTags.includes("pop") || topTags.includes("dance")) 
+          vibe = "Party";
         else if (topTags.includes("desi")) vibe = "Desi";
-        else if (topTags.includes("pop")) vibe = "Party";
 
         return { topTags, topArtists, preferredSource, vibe };
       };
 
       const getDailyMix = async (profile) => {
         const promises = [];
-        if (profile.topArtists[0])
-          promises.push(searchSaavn(`${profile.topArtists[0]} radio`));
+        if (profile.topArtists[0] && profile.preferredSource !== "jamendo")
+          promises.push(searchSaavn(`${profile.topArtists[0]} songs`));
         
-        const tag = profile.topTags.find((t) => t !== "desi") || "pop";
-        promises.push(getTracksByTag(tag, 10));
-        
+        // Smart Suggestions based on Vibe
+        if (profile.vibe === "Chill") promises.push(searchSaavn("Lofi Hindi"));
+        else if (profile.vibe === "Party") promises.push(searchSaavn("Bollywood Dance"));
+        else if (profile.vibe === "Melancholy") promises.push(searchSaavn("Sad Hindi Songs"));
+        else if (profile.vibe === "Rocker") promises.push(getTracksByTag("rock", 10));
+        else promises.push(searchSaavn("Trending Hindi"));
+
         const results = await Promise.allSettled(promises);
         const tracks = [];
         results.forEach(
@@ -471,10 +467,17 @@
         const isNight = hour >= 20 || hour < 5;
         let queries = [];
 
-        // Only use Saavn-based recommendations
-        if (isMorning) queries.push("Morning Raga", "Bhakti");
-        else if (isNight) queries.push("Hindi Lofi", "Arijit Singh Sad");
-        else queries.push("Bollywood Party", "Punjabi Hits");
+        // REMOVED BHAKTI/DEVOTIONAL
+        if (profile.preferredSource !== "jamendo") {
+          if (isMorning) queries.push("Acoustic Hindi", "Soft Bollywood");
+          else if (isNight) queries.push("Hindi Lofi", "Arijit Singh Sad", "Romantic Hindi");
+          else queries.push("Bollywood Party", "Punjabi Hits", "New Hindi Songs");
+        }
+        if (profile.preferredSource !== "saavn") {
+          if (isMorning) queries.push("#acoustic", "#pop");
+          else if (isNight) queries.push("#jazz", "#chillout");
+          else queries.push("#rock", "#dance");
+        }
 
         const query =
           queries[Math.floor(Math.random() * queries.length)] || "Top Hits";
@@ -485,24 +488,28 @@
 
       const getMoodTracks = async (mood) => {
         const map = {
-          focus: "Instrumental Study",
-          relax: "Slow Hindi Songs",
-          workout: "Gym Workout",
-          party: "Bollywood Dance",
+          focus: { j: "classical+soundtrack", s: "Instrumental Study" },
+          relax: { j: "chillout+ambient", s: "Slow Hindi Songs" },
+          workout: { j: "rock+electronic", s: "Gym Workout" },
+          party: { j: "dance+house", s: "Bollywood Dance" },
         };
-        const query = map[mood] || "Top Hits";
-        const s = await searchSaavn(query);
-        return shuffle(s);
+        const t = map[mood];
+        const [j, s] = await Promise.all([
+          getTracksByTag(t.j, 15),
+          searchSaavn(t.s),
+        ]);
+        return shuffle([...j, ...s]);
       };
 
       const getExploreConfig = () => [
+        // REMOVED DEVOTIONAL
         { title: "New Releases", query: "New Hindi Songs" },
         { title: "Top Charts India", query: "Top 50 India" },
         { title: "Punjabi Power", query: "Latest Punjabi Hits" },
         { title: "Global Viral", query: "Viral Hits" },
         { title: "Retro Classics", query: "90s Bollywood" },
         { title: "Lo-Fi & Chill", query: "Lofi Hindi" },
-        { title: "Devotional", query: "Bhakti Songs" },
+        { title: "Romantic Mood", query: "Romantic Hindi" },
       ];
 
       // --- CONTEXTS ---
@@ -729,14 +736,16 @@
             return nf;
           });
 
-        // --- Media Session API integration (Android/Chrome notification + lockscreen controls) ---
+        // --- Media Session API integration ---
         useEffect(() => {
           if (!("mediaSession" in navigator)) return;
           const track = state.currentTrack;
+          
           if (!track) {
             try {
-              navigator.mediaSession.metadata = null;
-            } catch (e) {}
+                navigator.mediaSession.playbackState = "none";
+                navigator.mediaSession.metadata = null;
+            } catch(e) {}
             return;
           }
 
@@ -746,11 +755,12 @@
               artist: track.artist_name,
               album: track.album_name,
               artwork: [
-                {
-                  src: track.album_image,
-                  sizes: "512x512",
-                  type: "image/jpeg",
-                },
+                { src: track.album_image, sizes: "96x96", type: "image/jpeg" },
+                { src: track.album_image, sizes: "128x128", type: "image/jpeg" },
+                { src: track.album_image, sizes: "192x192", type: "image/jpeg" },
+                { src: track.album_image, sizes: "256x256", type: "image/jpeg" },
+                { src: track.album_image, sizes: "384x384", type: "image/jpeg" },
+                { src: track.album_image, sizes: "512x512", type: "image/jpeg" },
               ],
             });
           } catch (e) {
@@ -798,9 +808,23 @@
               }));
             }
           });
+          
+          ms.setActionHandler("seekbackward", (details) => {
+             const skip = details.seekOffset || 10;
+             if(audioRef.current) {
+                audioRef.current.currentTime = Math.max(audioRef.current.currentTime - skip, 0);
+             }
+          });
+          
+          ms.setActionHandler("seekforward", (details) => {
+             const skip = details.seekOffset || 10;
+             if(audioRef.current) {
+                audioRef.current.currentTime = Math.min(audioRef.current.currentTime + skip, audioRef.current.duration);
+             }
+          });
 
           return () => {
-            ["play", "pause", "previoustrack", "nexttrack", "seekto"].forEach(
+            ["play", "pause", "previoustrack", "nexttrack", "seekto", "seekbackward", "seekforward"].forEach(
               (action) => {
                 try {
                   ms.setActionHandler(action, null);
@@ -850,8 +874,8 @@
           <div className="hidden md:flex w-64 bg-black h-full flex-col flex-shrink-0 text-gray-400 font-medium z-40 border-r border-[#222]">
             <div className="p-6">
               <h1 className="text-white text-2xl font-black tracking-tight flex items-center gap-2">
-                <div className="bg-saavn-500 rounded p-1">
-                  <Music2 className="text-white" size={24} />
+                <div className="bg-jamendo-500 rounded p-1">
+                  <Globe className="text-white" size={24} />
                 </div>
                 <span>VEX MUSIC</span>
               </h1>
@@ -1090,6 +1114,7 @@
         onArtistClick,
         title,
         showCover = true,
+        onMenuClick
       }) => {
         const { currentTrack, isPlaying, toggleFavorite, isFavorite } =
           usePlayer();
@@ -1104,13 +1129,14 @@
                 {title}
               </h2>
             )}
-            <div className="hidden md:grid grid-cols-[24px_4fr_3fr_minmax(60px,1fr)] gap-4 px-4 py-2 border-b border-white/10 text-gray-400 text-xs font-bold uppercase tracking-wider sticky top-[64px] bg-[#121212]/95 backdrop-blur-md z-10 mb-2">
+            <div className="hidden md:grid grid-cols-[24px_4fr_3fr_minmax(60px,1fr)_40px] gap-4 px-4 py-2 border-b border-white/10 text-gray-400 text-xs font-bold uppercase tracking-wider sticky top-[64px] bg-[#121212]/95 backdrop-blur-md z-10 mb-2">
               <div>#</div>
               <div>Title</div>
               <div>Album</div>
               <div className="flex justify-end">
                 <Clock size={14} />
               </div>
+              <div></div>
             </div>
             <div className="space-y-0.5">
               {tracks.map((t, i) => {
@@ -1119,16 +1145,16 @@
                   <div
                     key={t.id}
                     onClick={() => onPlay(t, tracks)}
-                    className={`group grid grid-cols-[auto_1fr] md:grid-cols-[24px_4fr_3fr_minmax(60px,1fr)] gap-4 px-4 py-2 md:py-2.5 rounded-lg items-center cursor-pointer transition duration-200 ${
+                    className={`group grid grid-cols-[auto_1fr_40px] md:grid-cols-[24px_4fr_3fr_minmax(60px,1fr)_40px] gap-4 px-4 py-2 md:py-2.5 rounded-lg items-center cursor-pointer transition duration-200 ${
                       active ? "bg-white/10" : "hover:bg-white/5"
                     }`}
                   >
                     <div className="hidden md:flex items-center justify-center w-6">
                       {active && isPlaying ? (
                         <div className="flex gap-[2px] items-end h-3">
-                          <span className="w-0.5 bg-saavn-500 h-2 animate-pulse" />
-                          <span className="w-0.5 bg-saavn-500 h-3 animate-pulse delay-75" />
-                          <span className="w-0.5 bg-saavn-500 h-1 animate-pulse delay-150" />
+                          <span className="w-0.5 bg-jamendo-500 h-2 animate-pulse" />
+                          <span className="w-0.5 bg-jamendo-500 h-3 animate-pulse delay-75" />
+                          <span className="w-0.5 bg-jamendo-500 h-1 animate-pulse delay-150" />
                         </div>
                       ) : (
                         <span className="text-gray-500 group-hover:hidden text-sm font-medium">
@@ -1156,7 +1182,7 @@
                           {active && (
                             <div className="absolute inset-0 flex items-center justify-center">
                               <div className="flex items-end gap-[2px] h-3">
-                                <span className="w-1 bg-saavn-500 h-full animate-pulse" />
+                                <span className="w-1 bg-jamendo-500 h-full animate-pulse" />
                               </div>
                             </div>
                           )}
@@ -1165,7 +1191,7 @@
                       <div className="flex flex-col overflow-hidden justify-center">
                         <span
                           className={`truncate font-bold text-sm mb-0.5 ${
-                            active ? "text-saavn-500" : "text-white"
+                            active ? "text-jamendo-500" : "text-white"
                           }`}
                         >
                           {t.name}
@@ -1192,7 +1218,7 @@
                         }}
                         className={`hover:scale-110 transition ${
                           isFavorite(t.id)
-                            ? "text-saavn-500"
+                            ? "text-jamendo-500"
                             : "text-gray-500 hover:text-white opacity-0 group-hover:opacity-100"
                         }`}
                       >
@@ -1205,6 +1231,11 @@
                         {format(t.duration)}
                       </span>
                     </div>
+                    <div className="flex justify-end">
+                       <button onClick={(e) => { e.stopPropagation(); onMenuClick?.(t); }} className="text-gray-400 hover:text-white p-1">
+                          <MoreHorizontal size={18} />
+                       </button>
+                    </div>
                   </div>
                 );
               })}
@@ -1213,7 +1244,7 @@
         );
       };
 
-      const Section = ({ title, subtitle, tracks, onPlay, onArtistClick }) => {
+      const Section = ({ title, subtitle, tracks, onPlay, onArtistClick, onMenuClick }) => {
         if (!tracks || tracks.length === 0) return null;
         return (
           <div className="mb-10 px-4 md:px-0 animate-slide-up">
@@ -1230,7 +1261,7 @@
                 <div
                   key={track.id}
                   onClick={() => onPlay(track)}
-                  className="group bg-[#181818] hover:bg-[#282828] p-4 rounded-lg transition-all duration-300 cursor-pointer hover:-translate-y-2 hover:shadow-xl"
+                  className="group bg-[#181818] hover:bg-[#282828] p-4 rounded-lg transition-all duration-300 cursor-pointer hover:-translate-y-2 hover:shadow-xl relative"
                 >
                   <div className="relative mb-4 aspect-square shadow-black/50 shadow-lg rounded-md overflow-hidden">
                     <img
@@ -1255,12 +1286,80 @@
                   >
                     {track.artist_name}
                   </p>
+                  <button onClick={(e) => { e.stopPropagation(); onMenuClick?.(track); }} className="absolute top-2 right-2 p-2 bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition hover:bg-black text-white">
+                      <MoreHorizontal size={16} />
+                  </button>
                 </div>
               ))}
             </div>
           </div>
         );
       };
+      
+      const PlaylistPicker = ({ isOpen, onClose, playlists, onSelect }) => {
+          if(!isOpen) return null;
+          return (
+              <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-[#181818] w-full max-w-sm rounded-2xl border border-white/10 overflow-hidden shadow-2xl animate-slide-up">
+                      <div className="p-4 border-b border-white/10 flex justify-between items-center">
+                          <h3 className="font-bold text-lg">Add to Playlist</h3>
+                          <button onClick={onClose}><X size={20} /></button>
+                      </div>
+                      <div className="max-h-[60vh] overflow-y-auto p-2">
+                        {playlists.length === 0 && (
+                            <div className="text-center py-8 text-gray-500">
+                                No playlists found.
+                            </div>
+                        )}
+                        {playlists.map(p => (
+                            <button key={p.id} onClick={() => onSelect(p.id)} className="w-full flex items-center gap-3 p-3 hover:bg-white/10 rounded-lg text-left transition">
+                                <div className="bg-[#333] w-10 h-10 rounded flex items-center justify-center">
+                                    <Music size={20} />
+                                </div>
+                                <div className="flex-1">
+                                    <div className="font-bold text-sm truncate">{p.name}</div>
+                                    <div className="text-xs text-gray-400">{p.tracks ? p.tracks.length : 0} songs</div>
+                                </div>
+                            </button>
+                        ))}
+                      </div>
+                  </div>
+              </div>
+          );
+      }
+      
+      const TrackMenu = ({ isOpen, onClose, track, onAddToPlaylist, onRemoveFromPlaylist, isPlaylistView }) => {
+          if(!isOpen || !track) return null;
+          return (
+              <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+                  <div className="bg-[#181818] w-full max-w-sm rounded-2xl border border-white/10 overflow-hidden shadow-2xl animate-slide-up" onClick={e => e.stopPropagation()}>
+                      <div className="p-4 border-b border-white/10 flex items-center gap-3">
+                          <img src={track.album_image} className="w-12 h-12 rounded bg-[#333] object-cover" />
+                          <div className="flex-1 min-w-0">
+                              <h3 className="font-bold text-sm truncate">{track.name}</h3>
+                              <p className="text-xs text-gray-400 truncate">{track.artist_name}</p>
+                          </div>
+                          <button onClick={onClose}><X size={20} /></button>
+                      </div>
+                      <div className="p-2 space-y-1">
+                          {isPlaylistView ? (
+                              <button onClick={onRemoveFromPlaylist} className="w-full flex items-center gap-3 p-3 hover:bg-red-500/20 text-red-500 rounded-lg text-left transition font-bold text-sm">
+                                  <Trash2 size={18} />
+                                  Remove from this playlist
+                              </button>
+                          ) : (
+                             <button onClick={onAddToPlaylist} className="w-full flex items-center gap-3 p-3 hover:bg-white/10 rounded-lg text-left transition font-bold text-sm">
+                                  <PlusSquare size={18} />
+                                  Add to Playlist
+                              </button>
+                          )}
+                          <div className="h-px bg-white/10 my-1 mx-2" />
+                          <button onClick={onClose} className="w-full p-3 text-center text-gray-400 hover:text-white text-sm font-bold">Cancel</button>
+                      </div>
+                  </div>
+              </div>
+          );
+      }
 
       const Player = () => {
         const {
@@ -1325,7 +1424,7 @@
                   className="w-12 h-12 rounded object-cover shadow-lg"
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-saavn-500 font-bold truncate">
+                  <p className="text-jamendo-500 font-bold truncate">
                     {currentTrack.name}
                   </p>
                   <p className="text-xs text-gray-400 font-medium truncate">
@@ -1871,6 +1970,8 @@
         const [artist, setArtist] = useState(null);
         const [playlists, setPlaylists] = useState([]);
         const [selPl, setSelPl] = useState(null);
+        const [trackMenu, setTrackMenu] = useState(null);
+        const [showPlPicker, setShowPlPicker] = useState(false);
         const loaded = useRef(false);
 
         const { playPlaylist, favorites, history } = usePlayer();
@@ -1893,6 +1994,21 @@
           if (view === "home" && !loaded.current) {
             loadHome();
             loaded.current = true;
+          }
+          // Load Bangla/Hindi views when selected
+          if (view === "bangla") {
+             setLoading(true);
+             searchSaavn("Top Bangla Songs").then(t => {
+                 setTrending(t);
+                 setLoading(false);
+             });
+          }
+           if (view === "hindi") {
+             setLoading(true);
+             searchSaavn("Latest Hindi Hits").then(t => {
+                 setTrending(t);
+                 setLoading(false);
+             });
           }
         }, [view]);
 
@@ -1927,6 +2043,53 @@
                 tracks: [],
               }
             );
+        };
+        
+        const deletePlaylist = async (id) => {
+            if(!confirm("Delete this playlist?")) return;
+            await remove(ref(db, `users/${currentUser.uid}/playlists/${id}`));
+            if(selPl && selPl.id === id) {
+                setSelPl(null);
+                setView("library");
+            }
+        };
+
+        const addToPlaylist = async (plId) => {
+            if(!trackMenu || !currentUser) return;
+            const t = trackMenu;
+            const plRef = ref(db, `users/${currentUser.uid}/playlists/${plId}`);
+            try {
+                const snap = await get(plRef);
+                if(snap.exists()) {
+                    const data = snap.val();
+                    const tracks = data.tracks || [];
+                    if(tracks.find(x => x.id === t.id)) {
+                        alert("Song already in playlist!");
+                    } else {
+                        await update(plRef, { tracks: [...tracks, t] });
+                    }
+                }
+            } catch(e) { console.error(e); }
+            setShowPlPicker(false);
+            setTrackMenu(null);
+        };
+        
+        const removeFromPlaylist = async () => {
+            if(!trackMenu || !selPl || !currentUser) return;
+            const t = trackMenu;
+            const plRef = ref(db, `users/${currentUser.uid}/playlists/${selPl.id}`);
+             try {
+                const snap = await get(plRef);
+                if(snap.exists()) {
+                    const data = snap.val();
+                    const tracks = data.tracks || [];
+                    const newTracks = tracks.filter(x => x.id !== t.id);
+                    await update(plRef, { tracks: newTracks });
+                    // Update local selection immediately for UI responsiveness
+                    setSelPl({...selPl, tracks: newTracks});
+                }
+            } catch(e) { console.error(e); }
+            setTrackMenu(null);
         };
 
         const loadHome = async () => {
@@ -2135,6 +2298,9 @@
                       <span className="text-gray-600">•</span>{" "}
                       {selPl.tracks?.length || 0} songs
                     </p>
+                    <button onClick={() => deletePlaylist(selPl.id)} className="flex items-center gap-2 text-red-500 hover:bg-red-500/10 px-4 py-2 rounded-full w-fit transition text-sm font-bold">
+                        <Trash2 size={16} /> Delete Playlist
+                    </button>
                   </div>
                 </div>
                 <div className="px-2 md:px-4">
@@ -2143,12 +2309,12 @@
                       tracks={selPl.tracks}
                       onPlay={onPlay}
                       onArtistClick={onArtistClick}
+                      onMenuClick={t => setTrackMenu(t)}
                     />
                   ) : (
                     <div className="text-center py-20 text-gray-500 font-bold">
                       <p>
-                        This playlist is empty. Add songs from the player context
-                        menu!
+                        This playlist is empty. Add songs from the track menu!
                       </p>
                     </div>
                   )}
@@ -2198,6 +2364,7 @@
                         tracks={moodList}
                         onPlay={onPlay}
                         onArtistClick={onArtistClick}
+                        onMenuClick={t => setTrackMenu(t)}
                       />
                     </div>
                   ) : (
@@ -2246,6 +2413,7 @@
                             )
                           }
                           onArtistClick={onArtistClick}
+                          onMenuClick={t => setTrackMenu(t)}
                         />
                       )}
                       <Section
@@ -2254,6 +2422,7 @@
                         tracks={daily}
                         onPlay={(t) => onPlay(t, daily)}
                         onArtistClick={onArtistClick}
+                        onMenuClick={t => setTrackMenu(t)}
                       />
                       <Section
                         title={
@@ -2266,12 +2435,14 @@
                         tracks={timeRec}
                         onPlay={(t) => onPlay(t, timeRec)}
                         onArtistClick={onArtistClick}
+                        onMenuClick={t => setTrackMenu(t)}
                       />
                       <Section
                         title="Trending Globally"
                         tracks={trending}
                         onPlay={(t) => onPlay(t, trending)}
                         onArtistClick={onArtistClick}
+                        onMenuClick={t => setTrackMenu(t)}
                       />
                       {explore.map((s, i) => (
                         <Section
@@ -2280,6 +2451,7 @@
                           tracks={s.tracks}
                           onPlay={(t) => onPlay(t, s.tracks)}
                           onArtistClick={onArtistClick}
+                          onMenuClick={t => setTrackMenu(t)}
                         />
                       ))}
                     </>
@@ -2348,6 +2520,7 @@
                     tracks={trending}
                     onPlay={onPlay}
                     onArtistClick={onArtistClick}
+                    onMenuClick={t => setTrackMenu(t)}
                     title={
                       topRes ? "More Results" : `Results for "${query}"`
                     }
@@ -2355,6 +2528,38 @@
                 )}
               </div>
             );
+            
+          // --- HINDI / BANGLA VIEWS ---
+          if (view === "hindi" || view === "bangla") {
+             return (
+               <div className="pt-10">
+                <div className="flex items-center gap-8 mb-12 px-6 md:px-8">
+                  <div className="w-40 h-40 md:w-56 md:h-56 bg-gradient-to-br from-orange-500 to-yellow-500 rounded-2xl shadow-2xl flex items-center justify-center">
+                    <Radio size={80} className="text-white" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <span className="uppercase text-xs font-black tracking-widest flex items-center gap-1 text-white">
+                      Curated Playlist
+                    </span>
+                    <h1 className="text-5xl md:text-8xl font-black tracking-tighter">
+                      {view === 'hindi' ? 'Hindi Hits' : 'Bangla Beats'}
+                    </h1>
+                    <p className="text-gray-400 font-medium">
+                      The hottest tracks trending right now.
+                    </p>
+                  </div>
+                </div>
+                <div className="px-2 md:px-4">
+                  <TrackList
+                    tracks={trending}
+                    onPlay={onPlay}
+                    onArtistClick={onArtistClick}
+                    onMenuClick={t => setTrackMenu(t)}
+                  />
+                </div>
+              </div>
+             );
+          }
 
           if (view === "liked")
             return (
@@ -2380,6 +2585,7 @@
                     tracks={favorites}
                     onPlay={onPlay}
                     onArtistClick={onArtistClick}
+                    onMenuClick={t => setTrackMenu(t)}
                   />
                 </div>
               </div>
@@ -2415,6 +2621,7 @@
                     tracks={trending}
                     onPlay={onPlay}
                     onArtistClick={onArtistClick}
+                    onMenuClick={t => setTrackMenu(t)}
                     title="Popular Tracks"
                   />
                 </div>
@@ -2475,6 +2682,20 @@
                   setView(v);
                   setQuery("");
                 }}
+              />
+              <TrackMenu 
+                isOpen={!!trackMenu} 
+                onClose={() => setTrackMenu(null)}
+                track={trackMenu}
+                onAddToPlaylist={() => setShowPlPicker(true)}
+                onRemoveFromPlaylist={removeFromPlaylist}
+                isPlaylistView={view === "pl_det" && selPl}
+              />
+              <PlaylistPicker 
+                isOpen={showPlPicker} 
+                onClose={() => setShowPlPicker(false)}
+                playlists={playlists}
+                onSelect={addToPlaylist}
               />
             </main>
           </div>
