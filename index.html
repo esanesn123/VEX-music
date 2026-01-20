@@ -16,9 +16,9 @@
         theme: {
           extend: {
             colors: {
-              jamendo: {
-                500: "#8c366c",
-                600: "#752d5b",
+              saavn: {
+                500: "#ff6600",
+                600: "#cc5200",
               },
               spotify: {
                 black: "#121212",
@@ -183,8 +183,11 @@
       import { getDatabase, ref, push, set, onValue } from "firebase/database";
 
       // --- CONFIG ---
-      const CLIENT_ID = "443e1050";
-      const API_BASE_URL = "https://api.jamendo.com/v3.0";
+      const SAAVN_BASE_URLS = [
+        "https://saavn.dev.api.avishay.co.il",
+        "https://saavn.me",
+        "https://jiosaavn-api-privatecvc2.vercel.app",
+      ];
 
       const firebaseConfig = {
         apiKey: "AIzaSyA6jb5U-x8CSFtHCZMVqHaWzLeV98MoWGE",
@@ -219,77 +222,8 @@
           .join("&")}`;
       };
 
-      const fetchJamendo = async (endpoint, params) => {
-        const cacheKey = generateCacheKey(`jamendo_${endpoint}`, params);
-        const cached = getCached(cacheKey);
-        if (cached) return cached;
-
-        try {
-          const url = new URL(`${API_BASE_URL}${endpoint}`);
-          Object.entries({
-            client_id: CLIENT_ID,
-            format: "jsonpretty",
-            include: "musicinfo+stats",
-            limit: "20",
-            ...params,
-          }).forEach(([k, v]) => url.searchParams.append(k, v));
-
-          const response = await fetch(url.toString());
-          const data = await response.json();
-          const tracks = data.results.map((raw) => ({
-            id: raw.id,
-            name: raw.name,
-            duration: raw.duration,
-            artist_id: raw.artist_id,
-            artist_name: raw.artist_name,
-            album_name: raw.album_name,
-            album_id: raw.album_id,
-            album_image: raw.album_image,
-            audio: raw.audio,
-            audiodownload: raw.audiodownload,
-            shareurl: raw.shareurl,
-            image: raw.image,
-            source: "jamendo",
-            tags: raw.musicinfo?.tags?.tags || [],
-          }));
-
-          if (tracks.length > 0) setCache(cacheKey, tracks);
-          return tracks;
-        } catch (e) {
-          console.error(e);
-          return [];
-        }
-      };
-
-      const getTrendingTracks = (limit = 20) =>
-        fetchJamendo("/tracks/", {
-          limit: limit.toString(),
-          boost: "popularity_week",
-          lang: "en",
-        });
-      const searchJamendo = (query) =>
-        fetchJamendo("/tracks/", { search: query });
-      const getTracksByTag = (tag, limit = 20) =>
-        fetchJamendo("/tracks/", {
-          limit: limit.toString(),
-          tags: tag,
-          boost: "popularity_month",
-        });
-      const getTracksByArtist = (artistId, limit = 20) =>
-        fetchJamendo("/tracks/", {
-          limit: limit.toString(),
-          artist_id: artistId,
-          order: "popularity_total",
-        });
-
-      const SAAVN_BASE_URLS = [
-        "https://saavn.dev.api.avishay.co.il",
-        "https://saavn.me",
-        "https://jiosaavn-api-privatecvc2.vercel.app",
-      ];
-
       const mapSaavnToJamendo = (track) => {
-        let image = "https://www.jamendo.com/common/images/track_placeholder.png";
+        let image = "https://c.saavncdn.com/artworks/000000000/00000000/default.jpg";
         if (track.image) {
           if (Array.isArray(track.image) && track.image.length > 0) {
             image =
@@ -387,6 +321,88 @@
         return [];
       };
 
+      // Mock functions for trending and other features that were previously using Jamendo
+      const getTrendingTracks = async (limit = 20) => {
+        const cacheKey = generateCacheKey("saavn_trending", { limit });
+        const cached = getCached(cacheKey);
+        if (cached) return cached;
+
+        const trendingQueries = ["top songs", "trending", "popular", "featured"];
+        const randomQuery = trendingQueries[Math.floor(Math.random() * trendingQueries.length)];
+        
+        const results = await searchSaavn(randomQuery);
+        const limitedResults = results.slice(0, limit);
+        setCache(cacheKey, limitedResults);
+        return limitedResults;
+      };
+
+      const getTracksByTag = async (tag, limit = 20) => {
+        const cacheKey = generateCacheKey("saavn_tag", { tag, limit });
+        const cached = getCached(cacheKey);
+        if (cached) return cached;
+
+        const results = await searchSaavn(`${tag} songs`);
+        const limitedResults = results.slice(0, limit);
+        setCache(cacheKey, limitedResults);
+        return limitedResults;
+      };
+
+      const getTracksByArtist = async (artistId, limit = 20) => {
+        const cacheKey = generateCacheKey("saavn_artist", { artistId, limit });
+        const cached = getCached(cacheKey);
+        if (cached) return cached;
+
+        // Extract artist name from ID if it's a saavn ID
+        const artistName = artistId.startsWith('saavn_') ? 
+          artistId.replace('saavn_', '').replace(/_/g, ' ') : 
+          artistId;
+          
+        const results = await searchSaavn(artistName);
+        const limitedResults = results.slice(0, limit);
+        setCache(cacheKey, limitedResults);
+        return limitedResults;
+      };
+
+      const searchSaavn = async (query) => {
+        const cacheKey = generateCacheKey("saavn_search", { query });
+        const cached = getCached(cacheKey);
+        if (cached) return cached;
+
+        for (const baseUrl of SAAVN_BASE_URLS) {
+          try {
+            const res = await fetch(
+              `${baseUrl}/search/songs?query=${encodeURIComponent(
+                query
+              )}&page=1&limit=40`
+            );
+            if (!res.ok) continue;
+
+            const json = await res.json();
+            let results = [];
+
+            if (
+              json.status?.toLowerCase() === "success" ||
+              json.status === "SUCCESS" ||
+              json.data
+            ) {
+              if (json.data?.results) results = json.data.results;
+              else if (Array.isArray(json.data)) results = json.data;
+            }
+
+            if (results.length > 0) {
+              const tracks = results
+                .map(mapSaavnToJamendo)
+                .filter((t) => t !== null);
+              if (tracks.length > 0) {
+                setCache(cacheKey, tracks);
+                return tracks;
+              }
+            }
+          } catch (e) {}
+        }
+        return [];
+      };
+
       const shuffle = (array) => array.sort(() => Math.random() - 0.5);
 
       const analyzeTasteProfile = (history) => {
@@ -394,17 +410,15 @@
           return {
             topTags: [],
             topArtists: [],
-            preferredSource: "mixed",
+            preferredSource: "saavn",
             vibe: "Newcomer",
           };
         const tagCounts = {};
         const artistCounts = {};
-        let jamendoCount = 0,
-          saavnCount = 0;
+        let saavnCount = 0;
 
         history.forEach((track) => {
           if (track.source === "saavn") saavnCount++;
-          else jamendoCount++;
           const artist = track.artist_name.split(",")[0].trim();
           artistCounts[artist] = (artistCounts[artist] || 0) + 1;
           track.tags?.forEach((tag) => {
@@ -423,12 +437,7 @@
           .sort(([, a], [, b]) => b - a)
           .slice(0, 3)
           .map(([a]) => a);
-        const preferredSource =
-          saavnCount > jamendoCount * 1.5
-            ? "saavn"
-            : jamendoCount > saavnCount * 1.5
-            ? "jamendo"
-            : "mixed";
+        const preferredSource = "saavn";
 
         let vibe = "Eclectic";
         if (topTags.includes("rock") || topTags.includes("metal")) vibe = "Rocker";
@@ -442,12 +451,12 @@
 
       const getDailyMix = async (profile) => {
         const promises = [];
-        if (profile.topArtists[0] && profile.preferredSource !== "jamendo")
+        if (profile.topArtists[0])
           promises.push(searchSaavn(`${profile.topArtists[0]} radio`));
-        if (profile.preferredSource !== "saavn") {
-          const tag = profile.topTags.find((t) => t !== "desi") || "pop";
-          promises.push(getTracksByTag(tag, 10));
-        }
+        
+        const tag = profile.topTags.find((t) => t !== "desi") || "pop";
+        promises.push(getTracksByTag(tag, 10));
+        
         const results = await Promise.allSettled(promises);
         const tracks = [];
         results.forEach(
@@ -462,16 +471,10 @@
         const isNight = hour >= 20 || hour < 5;
         let queries = [];
 
-        if (profile.preferredSource !== "jamendo") {
-          if (isMorning) queries.push("Morning Raga", "Bhakti");
-          else if (isNight) queries.push("Hindi Lofi", "Arijit Singh Sad");
-          else queries.push("Bollywood Party", "Punjabi Hits");
-        }
-        if (profile.preferredSource !== "saavn") {
-          if (isMorning) queries.push("#acoustic", "#pop");
-          else if (isNight) queries.push("#jazz", "#chillout");
-          else queries.push("#rock", "#dance");
-        }
+        // Only use Saavn-based recommendations
+        if (isMorning) queries.push("Morning Raga", "Bhakti");
+        else if (isNight) queries.push("Hindi Lofi", "Arijit Singh Sad");
+        else queries.push("Bollywood Party", "Punjabi Hits");
 
         const query =
           queries[Math.floor(Math.random() * queries.length)] || "Top Hits";
@@ -482,17 +485,14 @@
 
       const getMoodTracks = async (mood) => {
         const map = {
-          focus: { j: "classical+soundtrack", s: "Instrumental Study" },
-          relax: { j: "chillout+ambient", s: "Slow Hindi Songs" },
-          workout: { j: "rock+electronic", s: "Gym Workout" },
-          party: { j: "dance+house", s: "Bollywood Dance" },
+          focus: "Instrumental Study",
+          relax: "Slow Hindi Songs",
+          workout: "Gym Workout",
+          party: "Bollywood Dance",
         };
-        const t = map[mood];
-        const [j, s] = await Promise.all([
-          getTracksByTag(t.j, 15),
-          searchSaavn(t.s),
-        ]);
-        return shuffle([...j, ...s]);
+        const query = map[mood] || "Top Hits";
+        const s = await searchSaavn(query);
+        return shuffle(s);
       };
 
       const getExploreConfig = () => [
@@ -850,8 +850,8 @@
           <div className="hidden md:flex w-64 bg-black h-full flex-col flex-shrink-0 text-gray-400 font-medium z-40 border-r border-[#222]">
             <div className="p-6">
               <h1 className="text-white text-2xl font-black tracking-tight flex items-center gap-2">
-                <div className="bg-jamendo-500 rounded p-1">
-                  <Globe className="text-white" size={24} />
+                <div className="bg-saavn-500 rounded p-1">
+                  <Music2 className="text-white" size={24} />
                 </div>
                 <span>VEX MUSIC</span>
               </h1>
@@ -1126,9 +1126,9 @@
                     <div className="hidden md:flex items-center justify-center w-6">
                       {active && isPlaying ? (
                         <div className="flex gap-[2px] items-end h-3">
-                          <span className="w-0.5 bg-jamendo-500 h-2 animate-pulse" />
-                          <span className="w-0.5 bg-jamendo-500 h-3 animate-pulse delay-75" />
-                          <span className="w-0.5 bg-jamendo-500 h-1 animate-pulse delay-150" />
+                          <span className="w-0.5 bg-saavn-500 h-2 animate-pulse" />
+                          <span className="w-0.5 bg-saavn-500 h-3 animate-pulse delay-75" />
+                          <span className="w-0.5 bg-saavn-500 h-1 animate-pulse delay-150" />
                         </div>
                       ) : (
                         <span className="text-gray-500 group-hover:hidden text-sm font-medium">
@@ -1156,7 +1156,7 @@
                           {active && (
                             <div className="absolute inset-0 flex items-center justify-center">
                               <div className="flex items-end gap-[2px] h-3">
-                                <span className="w-1 bg-jamendo-500 h-full animate-pulse" />
+                                <span className="w-1 bg-saavn-500 h-full animate-pulse" />
                               </div>
                             </div>
                           )}
@@ -1165,7 +1165,7 @@
                       <div className="flex flex-col overflow-hidden justify-center">
                         <span
                           className={`truncate font-bold text-sm mb-0.5 ${
-                            active ? "text-jamendo-500" : "text-white"
+                            active ? "text-saavn-500" : "text-white"
                           }`}
                         >
                           {t.name}
@@ -1192,7 +1192,7 @@
                         }}
                         className={`hover:scale-110 transition ${
                           isFavorite(t.id)
-                            ? "text-jamendo-500"
+                            ? "text-saavn-500"
                             : "text-gray-500 hover:text-white opacity-0 group-hover:opacity-100"
                         }`}
                       >
@@ -1325,7 +1325,7 @@
                   className="w-12 h-12 rounded object-cover shadow-lg"
                 />
                 <div className="flex-1 min-w-0">
-                  <p className="text-jamendo-500 font-bold truncate">
+                  <p className="text-saavn-500 font-bold truncate">
                     {currentTrack.name}
                   </p>
                   <p className="text-xs text-gray-400 font-medium truncate">
