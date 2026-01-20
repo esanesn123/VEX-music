@@ -825,6 +825,35 @@
       };
 
       // --- COMPONENTS ---
+      const PlaylistCover = ({ tracks }) => {
+        const images = (tracks || [])
+            .map(t => t.album_image)
+            .filter(Boolean)
+            .slice(0, 4);
+
+        if (images.length === 0) {
+            return (
+                <div className="w-full h-full bg-[#333] flex items-center justify-center text-gray-500">
+                    <Music size={48} />
+                </div>
+            );
+        }
+
+        if (images.length < 4) {
+            return (
+                <img src={images[0]} className="w-full h-full object-cover" />
+            );
+        }
+
+        return (
+            <div className="grid grid-cols-2 grid-rows-2 w-full h-full">
+                {images.map((img, i) => (
+                    <img key={i} src={img} className="w-full h-full object-cover" />
+                ))}
+            </div>
+        );
+      };
+
       const Sidebar = ({ currentView, onChangeView, onCreatePlaylist }) => {
         const { currentUser, logout } = useAuth();
         return (
@@ -1271,8 +1300,16 @@
                         )}
                         {playlists.map(p => (
                             <button key={p.id} onClick={() => onSelect(p.id)} className="w-full flex items-center gap-3 p-3 hover:bg-white/10 rounded-lg text-left transition">
-                                <div className="bg-[#333] w-10 h-10 rounded flex items-center justify-center">
-                                    <Music size={20} />
+                                <div className="bg-[#333] w-10 h-10 rounded flex items-center justify-center overflow-hidden">
+                                    {p.tracks && p.tracks.length >= 4 ? (
+                                        <div className="grid grid-cols-2 grid-rows-2 w-full h-full">
+                                            {p.tracks.slice(0, 4).map(t => <img src={t.album_image} className="w-full h-full object-cover"/>)}
+                                        </div>
+                                    ) : p.tracks && p.tracks.length > 0 ? (
+                                        <img src={p.tracks[0].album_image} className="w-full h-full object-cover"/>
+                                    ) : (
+                                        <Music size={20} />
+                                    )}
                                 </div>
                                 <div className="flex-1">
                                     <div className="font-bold text-sm truncate">{p.name}</div>
@@ -2281,15 +2318,15 @@
                     >
                       <div className="mb-auto bg-[#333] w-full aspect-square rounded-xl shadow-lg flex items-center justify-center relative overflow-hidden">
                         {p.isPublic && (
-                             <div className="absolute top-2 right-2 bg-jamendo-500 text-[8px] font-bold px-2 py-1 rounded text-white">PUBLIC</div>
+                             <div className="absolute top-2 right-2 bg-jamendo-500 text-[8px] font-bold px-2 py-1 rounded text-white z-10">PUBLIC</div>
                         )}
-                        <Music size={48} className="text-gray-500" />
+                        <PlaylistCover tracks={p.tracks} />
                       </div>
                       <h3 className="font-bold mt-5 truncate">{p.name}</h3>
                       <p className="text-xs text-gray-400 font-medium mt-1">
                         By {p.ownerName || "Unknown"}
                       </p>
-                      <div className="absolute right-4 bottom-28 bg-jamendo-500 rounded-full p-3.5 shadow-lg opacity-0 group-hover:opacity-100 transition translate-y-4 group-hover:translate-y-0">
+                      <div className="absolute right-4 bottom-28 bg-jamendo-500 rounded-full p-3.5 shadow-lg opacity-0 group-hover:opacity-100 transition translate-y-4 group-hover:translate-y-0 z-20">
                         <Play fill="white" size={20} />
                       </div>
                     </div>
@@ -2312,9 +2349,9 @@
                 <div className="flex flex-col md:flex-row items-end gap-8 mb-10 px-6 md:px-8">
                   <div className="w-52 h-52 bg-[#222] shadow-2xl flex items-center justify-center rounded-lg relative overflow-hidden">
                      {selPl.isPublic && (
-                         <div className="absolute top-0 right-0 bg-jamendo-500 text-white text-xs font-bold px-3 py-1 rounded-bl-lg">PUBLIC</div>
+                         <div className="absolute top-0 right-0 bg-jamendo-500 text-white text-xs font-bold px-3 py-1 rounded-bl-lg z-10">PUBLIC</div>
                      )}
-                    <Music size={80} className="text-gray-600" />
+                    <PlaylistCover tracks={selPl.tracks} />
                   </div>
                   <div className="flex flex-col gap-3">
                     <span className="uppercase text-xs font-black tracking-widest text-gray-400">
